@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+/*
+ * Minimal neutral palette — replace with your own design system.
+ * Swap these tokens (and add dark-mode variants) as your app takes shape.
+ */
+@theme {
+  --color-surface: oklch(0.98 0.002 250);
+  --color-panel: oklch(1 0 0);
+  --color-line: oklch(0.88 0.005 250);
+  --color-ink: oklch(0.2 0.01 250);
+  --color-muted: oklch(0.5 0.01 250);
+  --color-accent: oklch(0.55 0.15 250);
+  --color-accent-hover: oklch(0.5 0.15 250);
+  --color-danger: oklch(0.55 0.2 25);
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
