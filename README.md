@@ -62,9 +62,10 @@ API).
 chi router with: security headers (`security.go`), per-IP rate limiting via
 [go-chi/httprate](https://github.com/go-chi/httprate) on the auth endpoints,
 CSRF enforcement (`requireCSRF` middleware) on state-changing routes, request
-body size limits, and a trusted-proxy-aware real-IP resolver (`realip.go`) —
+body size limits, and trusted-proxy-aware client IP resolution
+(`clientip.go`, built on chi's `middleware.ClientIPFromXFFTrustedProxies` —
 see the comment there for why this doesn't use chi's deprecated
-`middleware.RealIP`.
+`middleware.RealIP`, which trusts `X-Forwarded-For` unconditionally).
 
 ### Database (`backend/internal/db`, `migrations/`, `db/queries/`)
 
@@ -98,10 +99,15 @@ go run golang.org/x/vuln/cmd/govulncheck@latest ./...
   in `cmd/server`, so a slow client can't hold a connection open forever.
 - **`go-chi/httprate`** for per-IP rate limiting on auth endpoints — a
   maintained library rather than a hand-rolled limiter.
-- **A trusted-proxy-aware real-IP middleware** (`realip.go`) instead of
-  chi's deprecated `middleware.RealIP`, which trusts `X-Forwarded-For`
+- **Trusted-proxy-aware client IP resolution** (`clientip.go`, on top of
+  chi's `middleware.ClientIPFromXFFTrustedProxies`) instead of chi's
+  deprecated `middleware.RealIP`, which trusts `X-Forwarded-For`
   unconditionally and is spoofable by any client — a real concern for
   IP-based rate limiting specifically.
+- **The Go toolchain patch version is pinned** in `backend/go.mod` (`go`
+  directive) and `backend/Dockerfile` (`FROM golang:X.Y.Z-alpine`) — bump
+  both together when `govulncheck` flags a stdlib CVE fixed in a newer
+  patch release.
 - **Security headers middleware** (`X-Content-Type-Options`,
   `X-Frame-Options`, CSP, etc.) and a **request body size cap** on JSON
   endpoints.

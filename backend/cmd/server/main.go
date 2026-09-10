@@ -71,7 +71,11 @@ func run() error {
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
-	r.Use(httpapi.TrustedProxyRealIP)
+	// Behind the production nginx proxy (docs/DEPLOY.md) there is exactly one
+	// trusted hop; ClientIPFallback covers the no-proxy case (local Docker
+	// Compose, where the frontend calls this service directly).
+	r.Use(middleware.ClientIPFromXFFTrustedProxies(1))
+	r.Use(httpapi.ClientIPFallback)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(cors.Handler(cors.Options{
