@@ -44,9 +44,9 @@ func (h *Handler) Register(r chi.Router) {
 	r.Route("/api", func(r chi.Router) {
 		r.Use(securityHeaders)
 
-		r.With(httprate.LimitByIP(magicLinkRateLimit, time.Minute)).
+		r.With(httprate.Limit(magicLinkRateLimit, time.Minute, httprate.WithKeyFuncs(clientIPKey))).
 			Post("/auth/magic-link", h.requestMagicLink)
-		r.With(httprate.LimitByIP(verifyRateLimit, time.Minute)).
+		r.With(httprate.Limit(verifyRateLimit, time.Minute, httprate.WithKeyFuncs(clientIPKey))).
 			Post("/auth/verify", h.verifyMagicLink)
 
 		r.Group(func(r chi.Router) {

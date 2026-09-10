@@ -53,9 +53,9 @@ Forge may not include Go. Install once per server (match the version in
 ```sh
 uname -m   # x86_64 → amd64, aarch64 → arm64
 cd /tmp
-curl -LO https://go.dev/dl/go1.26.4.linux-amd64.tar.gz   # or linux-arm64
+curl -LO https://go.dev/dl/go1.26.6.linux-amd64.tar.gz   # or linux-arm64 — match backend/go.mod's `go` directive
 sudo rm -rf /usr/local/go
-sudo tar -C /usr/local -xzf go1.26.4.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf go1.26.6.linux-amd64.tar.gz
 /usr/local/go/bin/go version
 ```
 
