@@ -1,10 +1,7 @@
-FROM node:22-alpine AS base
+FROM node:24-alpine AS base
 WORKDIR /app
 
 FROM base AS deps
-# Node 22's bundled npm (10.x) has a known arborist crash on some dependency
-# graphs (npm/cli#7724-class bug); npm 11+ fixes it.
-RUN npm install -g npm@latest
 COPY package.json package-lock.json ./
 RUN npm ci
 
