@@ -31,7 +31,7 @@
     "@nuxt/test-utils": "^4.0.3",
     "@pinia/testing": "^2.0.1",
     "@vue/test-utils": "^2.4.11",
-    "happy-dom": "^20.10.3",
+    "happy-dom": "^20.14.5",
     "vitest": "^5.0.0"
   }
 }
