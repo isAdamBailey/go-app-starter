@@ -19,8 +19,8 @@
     "@nuxt/eslint": "^1.16.0",
     "@pinia/nuxt": "^1.0.2",
     "@tailwindcss/vite": "^4.3.1",
-    "eslint": "^10.5.0",
-    "nuxt": "^4.5.2",
+    "eslint": "^10.12.0",
+    "nuxt": "^4.6.1",
     "nuxt-security": "^2.6.0",
     "pinia": "^4.0.3",
     "tailwindcss": "^4.3.1",
@@ -28,10 +28,10 @@
     "vue-router": "^5.1.0"
   },
   "devDependencies": {
-    "@nuxt/test-utils": "^4.0.3",
+    "@nuxt/test-utils": "^4.3.3",
     "@pinia/testing": "^2.0.1",
-    "@vue/test-utils": "^2.4.11",
-    "happy-dom": "^20.10.3",
-    "vitest": "^5.0.0"
+    "@vue/test-utils": "^2.5.1",
+    "happy-dom": "^21.0.1",
+    "vitest": "^5.0.3"
   }
 }
