@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"net"
 	"net/http"
 
 	"github.com/go-chi/chi/v5/middleware"
@@ -35,5 +36,9 @@ func clientIPKey(r *http.Request) (string, error) {
 	if ip := middleware.GetClientIP(r.Context()); ip != "" {
 		return ip, nil
 	}
-	return httprate.KeyByIP(r)
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		ip = r.RemoteAddr
+	}
+	return httprate.CanonicalizeIP(ip), nil
 }
