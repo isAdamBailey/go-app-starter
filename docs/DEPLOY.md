@@ -1,214 +1,291 @@
 # Deploying
 
-Production setup: a **VPS managed by [Laravel Forge](https://forge.laravel.com)**,
-PostgreSQL on the same server, Nuxt via PM2, and the Go API as a Forge daemon.
-This is the same shape used in production by the two apps this template was
-extracted from (`massa`, `face-value`) — proven, cheap (~$6–12/mo VPS), and
-simple enough for one person to operate.
+Production runs on the shared Go platform: a **Laravel Forge** server with
+PostgreSQL 18 on the box, one Forge site per app, and the Go API as a Forge
+daemon. Nuxt is generated to static files at deploy time, so there is **no
+Node process** in production.
+
+Placeholders used below:
+
+| Placeholder | Example |
+| --- | --- |
+| `<domain>` | `yourapp.example.com` |
+| `<slug>` | `your_app` (the slug passed to `scripts/new-app.sh`) |
+| `<port>` | `8103` (from the port registry below) |
+| `<id>` | the Forge daemon id, e.g. `1234567` |
 
 ## Architecture
 
 ```
-https://yourapp.example.com
-         │
-         ▼
-      Nginx (Forge-managed)
-         ├─ /api/*, /healthz  → 127.0.0.1:8080  (Go daemon)
-         └─ /*                → 127.0.0.1:3001  (Nuxt via PM2; port varies)
+https://<domain>
+        │
+        ▼
+     nginx (Forge-managed)
+        ├─ /api/*, /healthz → 127.0.0.1:<port>   (Go daemon)
+        └─ /*               → current/frontend/.output/public (static files)
 
-Postgres → 127.0.0.1 on the VPS
-Email    → your SMTP provider (e.g. SES)
+Postgres → 127.0.0.1:5432 on the same server, one role + database per app
+Email    → SES over SMTP (port 2587)
 ```
 
-Cookie auth requires **one domain**. Nginx proxies `/api` to Go; everything else
-goes to Nuxt. Production builds use same-origin API requests (`/api/...`), so
-`NUXT_PUBLIC_API_BASE` is optional when frontend and API share a domain.
+Cookie auth requires **one origin**: nginx serves the generated SPA and
+proxies `/api` to Go. `NUXT_PUBLIC_API_BASE` stays empty in production so the
+frontend calls same-origin `/api`.
 
 ---
 
-## 1. Server prerequisites
+## 1. Port registry
 
-Use an existing Forge server or provision a new one (e.g. DigitalOcean droplet).
+Every app's Go daemon gets its own port from the **81xx registry**
+(face-value#18): face-value `8101`, massa `8102`, the next app `8103`, and so
+on. `PORT` is always set explicitly in `.env`, never defaulted — the code
+default (`8080`) is for local dev only.
 
-### PostgreSQL
-
-Install Postgres on the VPS if Forge does not provide it:
+Check the port is free before claiming it:
 
 ```sh
-sudo apt update
-sudo apt install -y postgresql postgresql-contrib
-sudo -u postgres createuser --pwprompt app
-sudo -u postgres createdb -O app app
-sudo -u postgres psql -d app -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+sudo ss -ltnp | grep ':8103' || echo free
 ```
 
-Note `DATABASE_URL` for step 3, e.g.
-`postgres://app:PASSWORD@127.0.0.1:5432/app?sslmode=disable`.
+Add the app to the registry in face-value#18 once it's assigned.
 
-### Go
+---
 
-Forge may not include Go. Install once per server (match the version in
-`backend/go.mod`):
+## 2. Postgres role and database
+
+Each app gets its own role (with a password, no superuser) and its own
+database that no other role can connect to:
 
 ```sh
-uname -m   # x86_64 → amd64, aarch64 → arm64
-cd /tmp
-curl -LO https://go.dev/dl/go1.26.6.linux-amd64.tar.gz   # or linux-arm64 — match backend/go.mod's `go` directive
-sudo rm -rf /usr/local/go
-sudo tar -C /usr/local -xzf go1.26.6.linux-amd64.tar.gz
-/usr/local/go/bin/go version
+sudo -u postgres createuser --pwprompt --no-superuser --no-createdb --no-createrole <slug>
+sudo -u postgres createdb -O <slug> <slug>
+sudo -u postgres psql -c "REVOKE CONNECT ON DATABASE <slug> FROM PUBLIC;"
+sudo -u postgres psql -c "GRANT CONNECT ON DATABASE <slug> TO <slug>;"
 ```
 
-The deploy script adds `/usr/local/go/bin` to `PATH`.
+Connect over TCP to `127.0.0.1`, not the Unix socket:
+
+```
+DATABASE_URL=postgres://<slug>:PASSWORD@127.0.0.1:5432/<slug>?sslmode=disable
+```
+
+`pgcrypto` is a trusted extension, so the app role creates it from the
+migrations itself — no superuser step needed.
 
 ---
 
-## 2. Create the Forge site
+## 3. Create the Forge site
 
-1. **Sites → New Site** → your domain.
-2. Project type: **Nuxt**.
-3. **Web directory:** leave blank (repo root). The deploy script builds from
-   the monorepo; do not set `frontend`.
-4. **Server port:** use a free port (e.g. `3001` if `3000` is taken). Set
-   `NUXT_PORT` in environment to match (see step 3).
-5. Connect **GitHub** → your repo, branch `main`.
-6. Enable **Push to deploy**.
-7. **Deploy script:**
-
-   ```bash
-   bash $FORGE_SITE_PATH/scripts/forge-deploy.sh
-   ```
-
-8. **SSL** → obtain a Let's Encrypt certificate.
+1. **Sites → New Site** → `<domain>`.
+2. Project type: **Nuxt**, with the build type set to **Static**.
+3. **Web directory:** `/frontend/.output/public` (Forge prefixes `current/`
+   for zero-downtime sites; the nginx `root` in step 7 is what counts).
+4. Enable **zero-downtime deployments** (`releases/<id>` + a `current`
+   symlink).
+5. Connect **GitHub** → your repo, branch `main`. Leave **push to deploy** off
+   until the first deploy succeeds.
+6. **SSL** → Let's Encrypt. Forge keeps the custom nginx blocks from step 7
+   when it rewrites the config for the certificate.
 
 ---
 
-## 3. Environment variables
+## 4. Environment
 
-Forge → site → **Environment**. Forge writes these to
-`/home/forge/yourapp.example.com/.env` (site root, not inside each release).
+Forge → site → **Environment**. Forge writes this to
+`/home/forge/<domain>/.env`, at the **site root** — shared by every release.
+`scripts/forge-deploy.sh` reads it from `../../.env` (relative to
+`releases/<id>`) and `scripts/run-api.sh` from `../.env` (relative to
+`current/`). Both fail loudly if it's missing.
 
-Copy values from `.env.example` for local dev, then swap the following for
-production:
-
-| Variable | Local (`.env.example`) | Production (Forge) |
+| Variable | Local (`.env.example`) | Production |
 | --- | --- | --- |
-| `DATABASE_URL` | `postgres://…@postgres:5432/…` | `postgres://…@127.0.0.1:5432/app?sslmode=disable` |
-| `APP_BASE_URL` | `http://localhost:3000` | `https://yourapp.example.com` |
+| `PORT` | `8080` | `<port>` from the registry, e.g. `8103` |
+| `DATABASE_URL` | `postgres://…@postgres:5432/…` | `postgres://<slug>:…@127.0.0.1:5432/<slug>?sslmode=disable` |
+| `APP_BASE_URL` | `http://localhost:3000` | `https://<domain>` |
 | `COOKIE_SIGNING_SECRET` | dev placeholder | `openssl rand -base64 32` |
 | `COOKIE_SECURE` | `false` | `true` |
 | `EMAIL_PROVIDER` | `smtp` | `ses` (or `resend`) |
-| `SMTP_HOST` | `mailpit` | omit (auto from `SES_REGION` when using `ses`) |
-| `SMTP_PORT` | `1025` | omit (defaults to `587`) |
-| `SMTP_USERNAME` / `SMTP_PASSWORD` | empty | your SMTP credentials |
 | `SES_REGION` | empty | your SES region, e.g. `us-west-2` |
-| `MAGIC_LINK_FROM_EMAIL` | `login@app.local` | your verified sender address |
+| `SMTP_HOST` | `mailpit` | omit (derived from `SES_REGION`) |
+| `SMTP_PORT` | `1025` | **`2587`** — this server can't open 587 or 465; SES answers on 2587 |
+| `SMTP_USERNAME` / `SMTP_PASSWORD` | empty | SES SMTP credentials |
+| `MAGIC_LINK_FROM_EMAIL` | `login@app.local` | your verified sender |
 | `ALLOWED_EMAILS` | your email | same — must match what you type at login |
-| `NUXT_PUBLIC_API_BASE` | `http://localhost:8080` | omit (same-origin `/api` in production) |
+| `NUXT_PUBLIC_API_BASE` | `http://localhost:8080` | **empty** (same-origin `/api`; baked in at generate time) |
 
-Production-only (not in `.env.example`):
+Leave the code's `SMTP_PORT` default (`587`) alone; `2587` is a property of
+this server, so it lives in `.env`.
 
-| Variable | Value |
-| --- | --- |
-| `PORT` | `8080` (Go API — nginx proxies `/api` here) |
-| `NUXT_PORT` | Forge site port, e.g. `3001` if `3000` is taken |
-| `FORGE_API_DAEMON` | Supervisor name from Forge → Daemons, e.g. `daemon-1234567` |
+Changing a backend variable only needs a daemon restart
+(`sudo supervisorctl restart daemon-<id>:*`). Changing `NUXT_PUBLIC_*` needs a
+redeploy, because it's baked into the generated files.
 
-Changing env vars only requires restarting the API daemon — no full redeploy:
+If the app stores encrypted data, its encryption key in `.env` must move with
+the database, or the data is unreadable. Compare keys across servers by
+fingerprint instead of pasting them:
 
 ```sh
-sudo supervisorctl restart daemon-1234567
+grep '^KEY=' .env | cut -d= -f2- | sha256sum | cut -c1-12
 ```
 
 ---
 
-## 4. Go API daemon
+## 5. Deploy script
 
-1. **Server → Daemons → New Daemon**
-2. **Command:** `/home/forge/yourapp.example.com/current/scripts/run-api.sh`
-3. **Directory:** `/home/forge/yourapp.example.com/current`
-4. **User:** `forge`
+Forge → site → **Deployments → Deploy script**:
 
-Copy the supervisor name from the daemon page (e.g. `daemon-1234567`) into
-`FORGE_API_DAEMON`.
+```bash
+$CREATE_RELEASE()
 
-The deploy script runs `git pull`, builds the Go binary, rebuilds Nuxt,
-reloads PM2, and restarts this daemon.
+cd $FORGE_RELEASE_DIRECTORY
+
+bash scripts/forge-deploy.sh
+
+$ACTIVATE_RELEASE()
+
+sudo supervisorctl restart daemon-<id>:*
+```
+
+`scripts/forge-deploy.sh` runs inside the new release, before it's
+activated. It:
+
+1. loads `.env` (site root, falling back to `frontend/.env` and `.env`) and
+   fails if none exists;
+2. takes `flock` on `/tmp/node-build.lock` so deploys of different apps on
+   this server don't build at the same time, and sets `GOFLAGS=-p=2`;
+3. builds `backend/server`;
+4. runs the migrations — a bad migration fails the deploy and the old release
+   keeps serving;
+5. runs `npm ci` and `npm run generate`.
+
+The `:*` suffix on the restart matters: Forge daemons are supervisor groups,
+and `daemon-<id>` without it isn't found.
+
+When moving an existing app onto this script, turn **push to deploy off** on
+the old site before merging the rewrite, or the old site deploys the new
+script against the old shape.
 
 ---
 
-## 5. Nginx — proxy `/api` to Go
+## 6. Go API daemon
 
-Forge → site → **Nginx** — add **before** the existing `location /` block:
+**Server → Daemons → New Daemon**:
+
+| Field | Value |
+| --- | --- |
+| Command | `bash scripts/run-api.sh` |
+| Directory | `/home/forge/<domain>/current` |
+| User | `forge` |
+
+Note the daemon id for the deploy script's restart line.
+
+---
+
+## 7. nginx
+
+Forge → site → **Nginx**. Replace the generated `root` and `location /`
+blocks with:
 
 ```nginx
+root /home/forge/<domain>/current/frontend/.output/public;
+index index.html;
+
 location /api/ {
-    proxy_pass http://127.0.0.1:8080;
+    proxy_pass http://127.0.0.1:<port>;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 60s;
 }
 
 location = /healthz {
-    proxy_pass http://127.0.0.1:8080;
+    proxy_pass http://127.0.0.1:<port>;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+location /_nuxt/ {
+    expires 1y;
+    add_header Cache-Control "public, max-age=31536000, immutable";
+    try_files $uri =404;
+}
+
+location / {
+    try_files $uri $uri/ /200.html;
 }
 ```
 
-Ensure `location /` proxies to the Nuxt port (`127.0.0.1:3001` if that is
-your `NUXT_PORT`). Save — Forge reloads Nginx.
+`200.html` is the SPA fallback `npm run generate` writes; client-side routes
+that aren't prerendered fall through to it.
 
-`backend/internal/httpapi/realip.go` only trusts `X-Forwarded-For` when the
-connecting peer is loopback (i.e. this nginx) — this config is what makes
-that true, so per-IP rate limiting sees real client IPs rather than nginx's.
+`backend/internal/httpapi/clientip.go` only trusts `X-Forwarded-For` when the
+connecting peer is loopback (this nginx), so per-IP rate limiting sees real
+client IPs.
 
 ---
 
-## 6. First deploy
+## 8. DNS
 
-1. **Deploy Now** in Forge (or push to `main` with push-to-deploy enabled).
-2. Confirm the log shows Go build, `npm run build`, PM2 start, and daemon
-   restart.
+Point the domain at the server. DigitalOcean's nameservers lag panel edits
+by about 5 minutes — wait that out before debugging a stale answer.
+
+---
+
+## 9. First deploy
+
+1. **Deploy Now** in Forge.
+2. The log should show the `.env` path, the Go build, `migrations applied`,
+   `npm ci` and `nuxt generate`, then the daemon restart.
 3. Verify:
 
    ```sh
-   curl -s https://yourapp.example.com/healthz
-   curl -I http://127.0.0.1:3001
-   pm2 list
+   curl -s https://<domain>/healthz
+   ls /home/forge/<domain>/current/frontend/.output/public/{index,200}.html
+   sudo supervisorctl status | grep daemon-<id>
    ```
 
 4. Request a magic link and complete login.
+5. Turn **push to deploy** on.
+
+---
+
+## 10. Backups
+
+The nightly `pg-backup.sh` Forge scheduled job dumps every non-template
+database to S3, so a new app is covered without any change. Check the new
+database shows up in S3 the next morning.
+
+The job must run as **root**. It once ran as `forge` for two nights and
+failed silently with `Permission denied` (face-value#18, massa#15). After the
+first scheduled run, read `~/.forge/scheduled-<id>.log` — a successful hand
+run doesn't prove the scheduled one works.
 
 ---
 
 ## Troubleshooting
 
 | Symptom | Fix |
-|---------|-----|
-| 502 on `/` | `pm2 list` — the web process must listen on `NUXT_PORT`. See Nuxt 502 below. |
-| 502 on `/api` | Check **Server → Daemons**; run `scripts/run-api.sh` manually for errors |
-| Nuxt binds to wrong port | Set `NUXT_PORT=3001` in Forge env (not `PORT` — that's Go on 8080). Restart PM2 or redeploy. |
-| Nuxt 502 after deploy | `cd current/frontend && export NUXT_PORT=3001 PORT=3001 && pm2 delete <app>-web; pm2 start ecosystem.config.cjs --update-env && pm2 save` |
-| Magic link 200, no email | Email not on `ALLOWED_EMAILS`, or SMTP misconfigured — check daemon logs |
-| Login redirect broken | `APP_BASE_URL` must match your HTTPS domain |
-| Deploy fails on `go build` | Install Go (see step 1) |
-| Daemon restart fails in deploy | Set `FORGE_API_DAEMON` to the full supervisor name (`daemon-1234567`) |
+| --- | --- |
+| 502 on `/api` | The daemon is down or on another port. `sudo supervisorctl status`; run `bash scripts/run-api.sh` from `current/` to see the error; check `PORT` in `.env` matches the nginx `proxy_pass`. |
+| Deploy: `daemon-<id>: ERROR (no such process)` | Add the `:*` suffix: `sudo supervisorctl restart daemon-<id>:*`. |
+| Daemon log: `bind: address already in use` | Another app holds the port. Check `sudo ss -ltnp`, pick a free port from the registry, update `PORT` and the nginx blocks. |
+| Magic link lands on the login screen | nginx redirected to `/auth/callback/`. The auth middleware strips trailing slashes (`normalizePath` in `frontend/app/middleware/auth.global.ts`); make sure that change is deployed. Also check `APP_BASE_URL` is the HTTPS domain and `COOKIE_SECURE=true`. |
+| Magic link never arrives | Email not in `ALLOWED_EMAILS`, or SMTP is blocked: `SMTP_PORT` must be `2587` on this server. Check the daemon log. |
+| Deploy: `No .env found` | Set the environment in Forge so `/home/forge/<domain>/.env` exists at the site root. |
+| Deploy fails on `go build` | Install Go to `/usr/local/go`, matching `backend/go.mod`. |
+| Deploy fails on migrate | Fix the migration; the previous release is still live because activation never ran. |
 
 **Diagnose magic links:**
 
 ```sh
-sudo -u postgres psql -d app -c \
+sudo -u postgres psql -d <slug> -c \
   "SELECT user_email, created_at FROM magic_link_tokens ORDER BY created_at DESC LIMIT 5;"
-sudo -u postgres psql -d app -c "SELECT email FROM allowed_users;"
-sudo supervisorctl tail -100 daemon-1234567
+sudo -u postgres psql -d <slug> -c "SELECT email FROM allowed_users;"
+sudo supervisorctl tail -100 daemon-<id>:daemon-<id>_00
 ```
 
 No token rows → address not allowed or rate-limited (5/hour, plus 5/min/IP —
 see `httpapi.magicLinkRateLimit`). Token rows but no mail → check SMTP
-credentials and sender address in Forge env.
+credentials, `SMTP_PORT=2587`, and the sender address.
