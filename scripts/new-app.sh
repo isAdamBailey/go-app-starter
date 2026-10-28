@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Rewrites this template repo in place for a new app: Go module path, app
-# name/title, cookie names, PM2 process name, and default DB/user names.
+# name/title, cookie names, and default DB/user names.
 #
 # Usage:
 #   ./scripts/new-app.sh github.com/you/new-app "New App" new_app
@@ -17,7 +17,7 @@ fi
 
 NEW_MODULE="$1"        # e.g. github.com/you/new-app/backend
 NEW_NAME="$2"           # e.g. "New App"
-NEW_SLUG="$3"           # e.g. new_app (used for DB name, cookie prefix, PM2 process)
+NEW_SLUG="$3"           # e.g. new_app (used for DB name and cookie prefix)
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -43,10 +43,6 @@ echo "Renaming DB defaults: app -> $NEW_SLUG"
 sed -i.bak "s#:-app}#:-${NEW_SLUG}}#g; s#app:app@postgres#${NEW_SLUG}:${NEW_SLUG}@postgres#g; s#login@app.local#login@${NEW_SLUG}.local#g" docker-compose.yml .env.example && \
   rm docker-compose.yml.bak .env.example.bak
 
-echo "Renaming PM2 process: app-web -> ${NEW_SLUG}-web"
-sed -i.bak "s#app-web#${NEW_SLUG}-web#g" frontend/ecosystem.config.cjs scripts/forge-deploy.sh && \
-  rm frontend/ecosystem.config.cjs.bak scripts/forge-deploy.sh.bak
-
 echo "Regenerating go.sum for the new module path..."
 (cd backend && go mod tidy)
 
@@ -54,9 +50,10 @@ cat <<EOF
 
 Done. Remaining manual steps:
   1. Review the diff (git diff) — a few TODO comments still need your input
-     (package description, favicon, meta tags, PM2 name collisions).
+     (package description, favicon, meta tags).
   2. Update package.json's "name" field in frontend/ if you care about it.
-  3. Update docs/DEPLOY.md's example domain/paths for your real deployment.
+  3. Update docs/DEPLOY.md's example domain/paths for your real deployment,
+     and pick a free PORT from the server's 81xx port registry.
   4. Set a real COOKIE_SIGNING_SECRET in .env (openssl rand -base64 32).
   5. Rename this repo itself (git remote / GitHub repo name) if desired.
 EOF

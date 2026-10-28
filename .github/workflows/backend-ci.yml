@@ -46,6 +46,35 @@ jobs:
           cache-dependency-path: backend/go.sum
       - run: go test ./...
 
+  # Applies the embedded migrations to the same Postgres major version
+  # production runs, so a migration that only breaks on a real database
+  # fails here rather than in the deploy.
+  migrate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://app:app@localhost:5432/app?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - run: go run ./cmd/migrate
+
   build:
     runs-on: ubuntu-latest
     needs: [lint, test]

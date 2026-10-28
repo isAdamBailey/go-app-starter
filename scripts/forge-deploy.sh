@@ -1,61 +1,59 @@
 #!/usr/bin/env bash
+# Builds a Forge zero-downtime release in place. The Forge deploy script runs
+# this from the new release directory, between $CREATE_RELEASE() and
+# $ACTIVATE_RELEASE(), then restarts the API daemon itself:
+#
+#   $CREATE_RELEASE()
+#   cd $FORGE_RELEASE_DIRECTORY
+#   bash scripts/forge-deploy.sh
+#   $ACTIVATE_RELEASE()
+#   sudo supervisorctl restart daemon-<id>:*
+#
+# See docs/DEPLOY.md.
 set -euo pipefail
 
-if [[ -f "$FORGE_SITE_PATH/scripts/forge-deploy.sh" ]]; then
-  ROOT="$FORGE_SITE_PATH"
-elif [[ -f "$FORGE_SITE_PATH/../scripts/forge-deploy.sh" ]]; then
-  ROOT="$(cd "$FORGE_SITE_PATH/.." && pwd)"
-else
-  echo "Cannot find repo root from FORGE_SITE_PATH=$FORGE_SITE_PATH" >&2
+ROOT="$PWD"
+
+if [[ ! -f "$ROOT/scripts/forge-deploy.sh" ]]; then
+  echo "Run this from the repo root of the release (got $ROOT)" >&2
   exit 1
 fi
 
-cd "$ROOT"
-
 export PATH="/usr/local/go/bin:$HOME/go/bin:$PATH"
 
+# Forge keeps .env at the site root, two levels above releases/<id>.
 ENV_FILE=""
-for candidate in "$ROOT/.env" "$ROOT/../.env"; do
+for candidate in "$ROOT/../../.env" "$ROOT/frontend/.env" "$ROOT/.env"; do
   if [[ -f "$candidate" ]]; then
     ENV_FILE="$(cd "$(dirname "$candidate")" && pwd)/$(basename "$candidate")"
     break
   fi
 done
 
-if [[ -n "$ENV_FILE" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "$ENV_FILE"
-  set +a
+if [[ -z "$ENV_FILE" ]]; then
+  echo "No .env found (checked $ROOT/../../.env, $ROOT/frontend/.env and $ROOT/.env)" >&2
+  exit 1
 fi
 
-export NUXT_PORT="${NUXT_PORT:-3001}"
-export PORT="$NUXT_PORT"
+echo "Using env from $ENV_FILE"
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
 
-git pull origin "$FORGE_SITE_BRANCH"
+# Builds from every app on the server share one lock so two deploys don't
+# run Go and Node builds at once and exhaust memory.
+exec 9>/tmp/node-build.lock
+flock 9
 
-if [[ "${DEPLOY_SCRIPT_REEXECED:-}" != "1" && -f "$ROOT/scripts/forge-deploy.sh" ]]; then
-  export DEPLOY_SCRIPT_REEXECED=1
-  exec bash "$ROOT/scripts/forge-deploy.sh"
-fi
+export GOFLAGS="-p=2"
 
-chmod +x scripts/run-api.sh
-
-cd backend
+cd "$ROOT/backend"
 go build -o server ./cmd/server
-cd ..
+# Migrate before activation so a bad migration fails the deploy and the
+# current release keeps serving.
+go run ./cmd/migrate
 
-cd frontend
+cd "$ROOT/frontend"
 npm ci
-npm run build
-# TODO: rename "app-web" here (and in ecosystem.config.cjs) to match your app.
-pm2 delete app-web 2>/dev/null || true
-pm2 start ecosystem.config.cjs --update-env
-pm2 save
-cd ..
-
-if [[ -n "${FORGE_API_DAEMON:-}" ]]; then
-  if ! sudo supervisorctl restart "$FORGE_API_DAEMON"; then
-    echo "Warning: could not restart $FORGE_API_DAEMON — check Server → Daemons for the supervisor name (e.g. daemon-1234567)" >&2
-  fi
-fi
+npm run generate

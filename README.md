@@ -16,9 +16,11 @@ directly to start a new app.
   pgxpool, [sqlc](https://sqlc.dev)-generated queries, golang-migrate with
   embedded migrations
 - **Frontend**: Nuxt 4 SPA (`ssr: false`), Tailwind v4, Pinia
-- **Database**: PostgreSQL 16
+- **Database**: PostgreSQL 18
 - **Local dev**: Docker Compose (Postgres + Mailpit + backend + frontend)
-- **Production**: Laravel Forge on a VPS — see `docs/DEPLOY.md`
+- **Production**: the shared Go platform on Forge — nginx serves the
+  generated SPA and proxies `/api` to the Go daemon; no Node process. See
+  [`docs/DEPLOY.md`](docs/DEPLOY.md)
 
 Only need the Go backend (e.g. to drop into an existing Nuxt monorepo)? See
 `docs/MONOREPO.md`.
@@ -50,6 +52,11 @@ HttpOnly session cookie plus a CSRF cookie (double-submit pattern). Sessions
 are server-side rows (`sessions` table), so logout/revocation is immediate —
 no JWTs to invalidate. Access is gated by an email allowlist
 (`ALLOWED_EMAILS`), synced into the `allowed_users` table on every boot.
+
+On the frontend, `app/middleware/auth.global.ts` guards every route except
+the public ones. It strips a trailing slash before checking them, because
+nginx redirects prerendered routes to `/auth/callback/` — keep that rule when
+adding public routes, or the magic link lands on the login screen.
 
 ### Email (`backend/internal/mailer`)
 
@@ -119,6 +126,6 @@ go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
 ## Deploying
 
-See `docs/DEPLOY.md` for the full Forge + VPS setup this template is built
-for (nginx reverse proxy, PM2 for Nuxt, a Go daemon, environment variable
-reference, troubleshooting table).
+See [`docs/DEPLOY.md`](docs/DEPLOY.md) for the platform setup: port
+registry, per-app Postgres role, Forge zero-downtime site and deploy script,
+the Go daemon, nginx serving the static build, backups, and troubleshooting.

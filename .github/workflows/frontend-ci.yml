@@ -28,4 +28,6 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run test
-      - run: npm run build
+      - run: npm run generate
+      # nginx serves these in production (try_files ... /200.html).
+      - run: test -f .output/public/index.html && test -f .output/public/200.html
