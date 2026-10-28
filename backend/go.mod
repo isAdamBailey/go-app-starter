@@ -1,6 +1,6 @@
 module github.com/isAdamBailey/go-app-starter/backend
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
