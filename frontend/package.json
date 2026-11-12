@@ -18,20 +18,20 @@
   "dependencies": {
     "@nuxt/eslint": "^1.16.0",
     "@pinia/nuxt": "^1.0.3",
-    "@tailwindcss/vite": "^4.3.1",
-    "eslint": "^10.13.0",
-    "nuxt": "^4.6.2",
+    "@tailwindcss/vite": "^4.3.5",
+    "eslint": "^10.14.0",
+    "nuxt": "^4.6.4",
     "nuxt-security": "^2.7.0",
     "pinia": "^4.0.3",
     "tailwindcss": "^4.3.1",
-    "vue": "^3.5.35",
+    "vue": "^3.5.45",
     "vue-router": "^5.1.0"
   },
   "devDependencies": {
-    "@nuxt/test-utils": "^4.3.4",
+    "@nuxt/test-utils": "^4.4.0",
     "@pinia/testing": "^2.0.2",
     "@vue/test-utils": "^2.5.1",
     "happy-dom": "^21.0.4",
-    "vitest": "^5.0.5"
+    "vitest": "^5.1.0"
   }
 }
